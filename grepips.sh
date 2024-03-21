@@ -6,7 +6,7 @@ bold=$(tput bold)
 normal=$(tput sgr0)
 
 echo From which text do you wish to see the ip\'s and hostnames? \(paste text -\> press enter -\> press ctrl D\):
-readarray -t input # IFS=$'\n'  and the -t strips the newlines from the input - eventueel nog IFS=': '  - hoe maak ik dit silent?
+readarray -t input # IFS=$'\n'  and the -t strips the newlines from the input
 
 declare -a greppedIPs
 for i in ${!input[@]};
