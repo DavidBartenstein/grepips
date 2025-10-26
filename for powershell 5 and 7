@@ -1,0 +1,107 @@
+#!/usr/bin/env pwsh
+# Author: David Bartenstein
+# Purpose: paste text, extract IPv4 & IPv6 addresses, and show country codes (via local WHOIS)
+
+Write-Host "Paste your text below."
+Write-Host "Then press Ctrl+Z followed by Enter – and once more Ctrl+Z and Enter:`n"
+
+# =============================================
+# grepips.ps1 – Extract IP addresses from pasted text
+# and display their WHOIS country codes
+# =============================================
+
+# --- User instruction ---
+Write-Host "`nPaste your text here (Ctrl+V) and then press Ctrl+Z followed by Enter..." -ForegroundColor Cyan
+
+# --- Read pasted input ---
+$inputText = [Console]::In.ReadToEnd()
+
+if ([string]::IsNullOrWhiteSpace($inputText)) {
+    Write-Host "No input received. Script terminated." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "`n✅ Input received — processing..." -ForegroundColor Green
+
+# --- Regex for IPv4 + IPv6 ---
+$ipv4Pattern = '((?:\d{1,3}\.){3}\d{1,3})'
+$ipv6Pattern = '((?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4})'
+
+# --- Collect unique IPs ---
+$uniqueIPs = [System.Collections.Generic.HashSet[string]]::new()
+
+# Match IPv4
+[regex]::Matches($inputText, $ipv4Pattern) | ForEach-Object {
+    $ip = $_.Groups[1].Value
+    $valid = $true
+    foreach ($octet in $ip -split '\.') {
+        if ([int]$octet -gt 255) { $valid = $false; break }
+    }
+    if ($valid) { $uniqueIPs.Add($ip) | Out-Null }
+}
+
+# Match IPv6
+[regex]::Matches($inputText, $ipv6Pattern) | ForEach-Object {
+    $uniqueIPs.Add($_.Groups[1].Value) | Out-Null
+}
+
+if ($uniqueIPs.Count -eq 0) {
+    Write-Host "No IP addresses found in the provided text." -ForegroundColor Yellow
+    exit 0
+}
+
+# --- Check if 'whois' is available ---
+$whoisCmd = Get-Command whois -ErrorAction SilentlyContinue
+if (-not $whoisCmd) {
+    Write-Host "No 'whois' command found. Install it, e.g. via: winget install Akaere.whois" -ForegroundColor Red
+    exit 1
+}
+
+# --- Function: Get country code via WHOIS ---
+function Get-CountryCode {
+    param([string]$ip)
+    try {
+        $whois = & whois $ip 2>$null
+        if ($whois) {
+            $cc = ($whois |
+                Select-String -Pattern '^\s*[Cc]ountry\s*[:\s]\s*(\w{2})' -AllMatches |
+                ForEach-Object { $_.Matches.Groups[1].Value } |
+                Select-Object -First 1)
+            if ($cc) { return $cc.ToUpper() }
+        }
+    } catch {}
+    return '??'
+}
+
+# --- Display results ---
+Write-Host "`n==================== RESULTS ====================`n"
+
+$results = @()
+
+foreach ($ip in $uniqueIPs) {
+    $cc = Get-CountryCode $ip
+    $results += [PSCustomObject]@{IP=$ip; Country=$cc}
+
+    $ansiBold = "`e[1m"
+    $ansiReset = "`e[0m"
+
+    if ($cc -eq 'NL') {
+        Write-Host ("✅ {0}{1} → {2}{3}" -f $ansiBold, $ip, $cc, $ansiReset) -ForegroundColor Green
+    }
+    elseif ($cc -eq '??') {
+        Write-Host ("⚪ {0}{1} → {2}{3}" -f $ansiBold, $ip, $cc, $ansiReset) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host ("🚨 {0}{1} → {2}{3}" -f $ansiBold, $ip, $cc, $ansiReset) -ForegroundColor Red
+    }
+}
+
+# --- Summary ---
+$nlCount       = ($results | Where-Object { $_.Country -eq 'NL' }).Count
+$foreignCount  = ($results | Where-Object { $_.Country -ne 'NL' -and $_.Country -ne '??' }).Count
+$unknownCount  = ($results | Where-Object { $_.Country -eq '??' }).Count
+$totalCount    = $results.Count
+
+Write-Host "`n====================================================" -ForegroundColor DarkGray
+Write-Host ("Total: {0}  |  NL: {1}  |  Foreign: {2}  |  Unknown: {3}" -f $totalCount,$nlCount,$foreignCount,$unknownCount) -ForegroundColor Cyan
+Write-Host "====================================================`n" -ForegroundColor DarkGray
